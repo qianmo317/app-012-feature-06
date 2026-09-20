@@ -19,6 +19,43 @@ export interface WeighResult {
   deltaG: number;
 }
 
+export interface PackageRecord {
+  herb: string;
+  grams: number;
+  decoct: DecoctType;
+  separate: boolean;
+  labeled: boolean;
+}
+
+export type ReviewIssueType = 'weight' | 'split' | 'label';
+
+export interface ReviewIssue {
+  type: ReviewIssueType;
+  detail: string;
+}
+
+export type ReviewDecision = 'reweigh' | 'accept';
+
+export interface ReviewItem {
+  herb: string;
+  target: number;
+  decoct: DecoctType;
+  attempts: WeighResult[];
+  issues: ReviewIssue[];
+  decision: ReviewDecision | null;
+  note: string;
+}
+
+export interface ReworkRecord {
+  herb: string;
+  round: number;
+  issues: string[];
+  note: string;
+  beforeActual: number;
+  afterActual: number | null;
+  at: number;
+}
+
 export interface GameState {
   level: number;
   score: number;
@@ -47,7 +84,7 @@ export interface ScoreBreakdown {
   total: number;
 }
 
-export type GamePhase = 'menu' | 'playing' | 'weighing' | 'review' | 'result' | 'gameover';
+export type GamePhase = 'menu' | 'playing' | 'weighing' | 'packaging' | 'review' | 'result' | 'gameover';
 
 export interface HerbMeta {
   name: string;

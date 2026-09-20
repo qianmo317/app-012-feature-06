@@ -1,8 +1,9 @@
-import type { GameState, GamePhase, Prescription, WeighResult, LevelConfig } from '../types';
+import type { GameState, GamePhase, Prescription, WeighResult, LevelConfig, PackageRecord, ReviewItem, ReviewDecision, ReworkRecord } from '../types';
 import { getLevelConfig } from '../levels';
-import { generatePrescription, generateReviewQuestion } from '../prescription';
+import { generatePrescription } from '../prescription';
 import { judgeWeight, getWeightStatus } from '../weighing';
 import { scoreRound } from '../scoring';
+import { buildReviewItems, reviewComplete, itemsNeedingRework, acceptedItems, latestAttempt } from '../review';
 import { getRandomHerbs } from '../herbs';
 import type { HerbMeta } from '../types';
 
@@ -26,10 +27,13 @@ export class GameManager {
   currentHerb: string | null = null;
   weighed = new Set<string>();
   results: WeighResult[] = [];
-  packages: Array<{ herb: string; grams: number; decoct: string }> = [];
-  reviewQuestion: ReturnType<typeof generateReviewQuestion> = null;
-  reviewSelected: number | null = null;
-  reviewResult: boolean | null = null;
+  packages: PackageRecord[] = [];
+  reviewItems: ReviewItem[] = [];
+  reworkLog: ReworkRecord[] = [];
+  reviewRound = 0;
+  pendingPackage: { herb: string; grams: number } | null = null;
+  pkgSeparate = false;
+  pkgLabeled = true;
   levelConfig: LevelConfig = getLevelConfig(1);
 
   timeLeft: number | null = null;
@@ -58,9 +62,12 @@ export class GameManager {
     this.weighed = new Set();
     this.results = [];
     this.packages = [];
-    this.reviewQuestion = null;
-    this.reviewSelected = null;
-    this.reviewResult = null;
+    this.reviewItems = [];
+    this.reworkLog = [];
+    this.reviewRound = 0;
+    this.pendingPackage = null;
+    this.pkgSeparate = false;
+    this.pkgLabeled = true;
     this.timeLeft = this.levelConfig.timeLimit;
     this.timeUsed = 0;
     this.lastTick = performance.now();
@@ -127,57 +134,127 @@ export class GameManager {
     const timeLimit = this.levelConfig.timeLimit;
     const breakdown = scoreRound(result, this.levelConfig.tolerance, this.state.combo, this.timeUsed, timeLimit);
 
-    if (status === 'fail') {
-      this.state.combo = 0;
-    } else {
-      this.state.combo++;
-      this.state.score += breakdown.total;
-      this.weighed.add(this.currentHerb);
-      const item = this.prescription.items.find(i => i.herb === this.currentHerb);
-      if (item) {
-        this.packages.push({ herb: item.herb, grams: this.currentWeight, decoct: item.decoct });
-      }
-    }
-
-    this.drawerOpen.delete(this.currentHerb);
+    const herb = this.currentHerb;
+    const grams = this.currentWeight;
+    this.drawerOpen.delete(herb);
     this.currentHerb = null;
     this.currentWeight = 0;
     this.zeroOffset = 0;
 
-    if (this.weighed.size >= this.prescription.items.length) {
-      this.startReview();
-    } else {
+    if (status === 'fail') {
+      this.state.combo = 0;
       this.phase = 'playing';
+      return result;
+    }
+
+    this.state.combo++;
+    this.state.score += breakdown.total;
+    this.weighed.add(herb);
+
+    // 返工回来的药：把重抓后的克数回填进返工记录
+    const openRework = [...this.reworkLog].reverse().find(r => r.herb === herb && r.afterActual === null);
+    if (openRework) openRework.afterActual = grams;
+
+    if (this.levelConfig.enableDecoctSplit) {
+      this.pendingPackage = { herb, grams };
+      this.pkgSeparate = false;
+      this.pkgLabeled = true;
+      this.phase = 'packaging';
+    } else {
+      this.addPackage(herb, grams, false, true);
+      this.afterWeighDone();
     }
 
     return result;
   }
 
+  private addPackage(herb: string, grams: number, separate: boolean, labeled: boolean): void {
+    if (!this.prescription) return;
+    const item = this.prescription.items.find(i => i.herb === herb);
+    if (!item) return;
+    // 同一味重抓后只留最新一包
+    this.packages = this.packages.filter(p => p.herb !== herb);
+    this.packages.push({ herb, grams, decoct: item.decoct, separate, labeled });
+  }
+
+  private afterWeighDone(): void {
+    if (this.prescription && this.weighed.size >= this.prescription.items.length) {
+      this.startReview();
+    } else {
+      this.phase = 'playing';
+    }
+  }
+
+  confirmPackaging(separate: boolean, labeled: boolean): void {
+    if (this.phase !== 'packaging' || !this.pendingPackage) return;
+    this.addPackage(this.pendingPackage.herb, this.pendingPackage.grams, separate, labeled);
+    this.pendingPackage = null;
+    this.afterWeighDone();
+  }
+
   startReview(): void {
     if (!this.prescription) return;
-    this.reviewQuestion = generateReviewQuestion(this.prescription);
-    this.reviewSelected = null;
-    this.reviewResult = null;
+    this.reviewRound++;
+    this.reviewItems = buildReviewItems(this.prescription, this.results, this.packages, this.levelConfig.tolerance);
     this.phase = 'review';
   }
 
-  answerReview(answer: number): boolean {
-    if (!this.reviewQuestion || this.reviewSelected !== null) return false;
-    this.reviewSelected = answer;
-    const correct = answer === this.reviewQuestion.correct;
-    this.reviewResult = correct;
-    if (!correct) {
-      this.state.satisfaction -= 10;
+  decideReviewItem(herb: string, decision: ReviewDecision): void {
+    const item = this.reviewItems.find(i => i.herb === herb);
+    if (!item || item.issues.length === 0) return;
+    item.decision = decision;
+    item.note = '';
+  }
+
+  setReviewNote(herb: string, note: string): void {
+    const item = this.reviewItems.find(i => i.herb === herb);
+    if (!item || !item.decision) return;
+    item.note = note;
+  }
+
+  canApplyReview(): boolean {
+    return this.reviewItems.length > 0 && reviewComplete(this.reviewItems);
+  }
+
+  applyReview(): void {
+    if (!this.canApplyReview()) return;
+
+    const reweigh = itemsNeedingRework(this.reviewItems);
+    const accepted = acceptedItems(this.reviewItems);
+    const cleanCount = this.reviewItems.length - reweigh.length - accepted.length;
+
+    this.state.satisfaction = Math.min(100, this.state.satisfaction + cleanCount * 2);
+    this.state.satisfaction = Math.max(0, this.state.satisfaction - accepted.length * 5);
+
+    if (reweigh.length > 0) {
+      for (const item of reweigh) {
+        const last = latestAttempt(item.attempts);
+        this.reworkLog.push({
+          herb: item.herb,
+          round: this.reworkLog.filter(r => r.herb === item.herb).length + 1,
+          issues: item.issues.map(i => i.detail),
+          note: item.note,
+          beforeActual: last ? last.actual : 0,
+          afterActual: null,
+          at: Date.now(),
+        });
+        this.weighed.delete(item.herb);
+        this.packages = this.packages.filter(p => p.herb !== item.herb);
+      }
       this.state.combo = 0;
-    } else {
-      this.state.satisfaction = Math.min(100, this.state.satisfaction + 5);
+      this.phase = 'playing';
+      return;
     }
-    setTimeout(() => this.finishLevel(), 1500);
-    return correct;
+
+    this.finishLevel();
+  }
+
+  levelPassed(): boolean {
+    return this.reviewItems.length > 0 && this.reviewItems.every(i => i.issues.length === 0 || i.decision === 'accept');
   }
 
   finishLevel(): void {
-    const passed = this.results.every(r => r.ok) && this.state.satisfaction > 0;
+    const passed = this.levelPassed() && this.state.satisfaction > 0;
     if (passed) {
       this.state.queue = Math.min(10, this.state.queue + 1);
     } else {

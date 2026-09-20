@@ -21,15 +21,3 @@ export function generatePrescription(config: LevelConfig): Prescription {
     items
   };
 }
-
-export function generateReviewQuestion(prescription: Prescription): { herb: string; options: number[]; correct: number } | null {
-  if (prescription.items.length === 0) return null;
-  const item = prescription.items[Math.floor(Math.random() * prescription.items.length)];
-  const correct = item.grams;
-  const options = new Set<number>([correct]);
-  while (options.size < 3) {
-    const delta = Math.floor(Math.random() * 10) - 5;
-    if (delta !== 0) options.add(Math.max(1, correct + delta));
-  }
-  return { herb: item.herb, options: Array.from(options).sort(() => Math.random() - 0.5), correct };
-}

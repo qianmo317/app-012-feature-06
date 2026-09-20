@@ -15,6 +15,7 @@ export class ApothecaryGame {
   animId = 0;
   mouseX = 0;
   mouseY = 0;
+  lastPhase: string = '';
 
   constructor(canvasId: string) {
     this.canvas = new GameCanvas(canvasId);
@@ -56,6 +57,11 @@ export class ApothecaryGame {
       this.renderMenu(ctx, w, h);
       return;
     }
+
+    if (this.game.phase === 'review' && this.lastPhase !== 'review') {
+      this.ui.reviewScroll = 0;
+    }
+    this.lastPhase = this.game.phase;
 
     ctx.fillStyle = '#2d2418';
     ctx.fillRect(0, 0, w, h);
@@ -99,12 +105,13 @@ export class ApothecaryGame {
       }
     }
 
-    if (this.game.phase === 'review') {
-      if (this.game.reviewQuestion) {
-        this.ui.drawReview(ctx, w, h, this.game.reviewQuestion.herb, this.game.reviewQuestion.options, this.game.reviewSelected, this.game.reviewResult);
-      }
+    if (this.game.phase === 'packaging' && this.game.pendingPackage) {
+      const item = this.game.prescription?.items.find(i => i.herb === this.game.pendingPackage!.herb);
+      this.ui.drawPackaging(ctx, w, h, this.game.pendingPackage.herb, this.game.pendingPackage.grams, item?.decoct ?? 'normal', this.game.pkgSeparate, this.game.pkgLabeled);
+    } else if (this.game.phase === 'review') {
+      this.ui.drawReview(ctx, w, h, this.game.reviewItems, this.game.reworkLog, this.game.reviewRound, this.game.canApplyReview());
     } else if (this.game.phase === 'result') {
-      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.results, this.game.results.every(r => r.ok));
+      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.reviewItems, this.game.reworkLog, this.game.levelPassed());
     } else if (this.game.phase === 'gameover') {
       this.ui.drawGameOver(ctx, w, h, this.game.state.score, this.game.state.level);
     }
@@ -156,6 +163,8 @@ export class ApothecaryGame {
         const dir = e.deltaY > 0 ? 1 : -1;
         this.game.addWeight(dir * 0.5);
         playPointerSound();
+      } else if (this.game.phase === 'review') {
+        this.ui.reviewScroll = Math.max(0, Math.min(this.ui.reviewMaxScroll, this.ui.reviewScroll + e.deltaY * 0.5));
       }
     }, { passive: false });
 
@@ -202,13 +211,37 @@ export class ApothecaryGame {
       return;
     }
 
+    if (this.game.phase === 'packaging') {
+      const btn = this.ui.buttonRects.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+      if (btn) {
+        if (btn.action === 'pkg|separate') {
+          this.game.pkgSeparate = !this.game.pkgSeparate;
+          playPointerSound();
+        } else if (btn.action === 'pkg|label') {
+          this.game.pkgLabeled = !this.game.pkgLabeled;
+          playPointerSound();
+        } else if (btn.action === 'pkg|confirm') {
+          this.game.confirmPackaging(this.game.pkgSeparate, this.game.pkgLabeled);
+          playDropSound();
+        }
+      }
+      return;
+    }
+
     if (this.game.phase === 'review') {
       const btn = this.ui.buttonRects.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-      if (btn && btn.action.startsWith('review-')) {
-        const val = parseInt(btn.action.replace('review-', ''));
-        const correct = this.game.answerReview(val);
-        if (correct) playSuccessSound();
-        else playErrorSound();
+      if (btn) {
+        const parts = btn.action.split('|');
+        if (parts[0] === 'decide') {
+          this.game.decideReviewItem(parts[2], parts[1] as 'reweigh' | 'accept');
+          playPointerSound();
+        } else if (parts[0] === 'note') {
+          this.game.setReviewNote(parts[1], parts.slice(2).join('|'));
+          playPointerSound();
+        } else if (btn.action === 'apply-review') {
+          this.game.applyReview();
+          playSuccessSound();
+        }
       }
       return;
     }
@@ -338,9 +371,17 @@ export class ApothecaryGame {
       return;
     }
 
+    if (this.game.phase === 'packaging') {
+      if (key === ' ' || key === 'Enter') {
+        this.game.confirmPackaging(this.game.pkgSeparate, this.game.pkgLabeled);
+        playDropSound();
+      }
+      return;
+    }
+
     if (this.game.phase === 'result') {
       if (key === 'Enter' || key === ' ') {
-        const passed = this.game.results.every(r => r.ok);
+        const passed = this.game.levelPassed();
         if (passed) {
           this.game.nextLevel();
         } else {

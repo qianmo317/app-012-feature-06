@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generatePrescription, generateReviewQuestion } from '../src/prescription';
+import { generatePrescription } from '../src/prescription';
 import { getLevelConfig } from '../src/levels';
 
 describe('generatePrescription', () => {
@@ -53,32 +53,5 @@ describe('generatePrescription', () => {
       expect(item.herb).toBeTruthy();
       expect(typeof item.herb).toBe('string');
     }
-  });
-});
-
-describe('generateReviewQuestion', () => {
-  it('should return null for empty prescription', () => {
-    const result = generateReviewQuestion({ id: '1', items: [] });
-    expect(result).toBeNull();
-  });
-
-  it('should return question with 3 options', () => {
-    const rx = generatePrescription(getLevelConfig(1));
-    const q = generateReviewQuestion(rx);
-    expect(q).not.toBeNull();
-    expect(q!.options.length).toBe(3);
-  });
-
-  it('should include correct answer in options', () => {
-    const rx = generatePrescription(getLevelConfig(1));
-    const q = generateReviewQuestion(rx);
-    expect(q!.options).toContain(q!.correct);
-  });
-
-  it('should ask about a herb in the prescription', () => {
-    const rx = generatePrescription(getLevelConfig(1));
-    const q = generateReviewQuestion(rx);
-    const herbNames = rx.items.map(i => i.herb);
-    expect(herbNames).toContain(q!.herb);
   });
 });
