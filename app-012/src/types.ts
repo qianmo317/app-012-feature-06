@@ -19,6 +19,35 @@ export interface WeighResult {
   deltaG: number;
 }
 
+export interface Package {
+  herb: string;
+  grams: number;
+  decoct: DecoctType;
+  separated: boolean;
+  labeled: boolean;
+}
+
+export type ReviewIssue = 'weight' | 'not-separated' | 'unlabeled';
+
+export type ReviewDecision = 'reweigh' | 'accept';
+
+export interface ReviewEntry {
+  herb: string;
+  target: number;
+  decoct: DecoctType;
+  attempts: WeighResult[];
+  issues: ReviewIssue[];
+  decision: ReviewDecision | null;
+}
+
+export interface ReworkRecord {
+  round: number;
+  herb: string;
+  issues: ReviewIssue[];
+  decision: ReviewDecision;
+  actual: number;
+}
+
 export interface GameState {
   level: number;
   score: number;

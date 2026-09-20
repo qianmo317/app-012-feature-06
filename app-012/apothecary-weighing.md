@@ -14,7 +14,7 @@
 ## 3. 核心玩法
 1. **看方抓药**：左侧显示处方（3~8 味药 + 克数），右侧百子柜抽屉网格（药名在抽屉上，需辨认/记忆）。
 2. **称量小游戏**：拖药到戥子托盘 → 出现指针/刻度 → 鼠标滚轮或拖砝码微调，指针进入 ±误差窗口才算合格；超差则提示重来。
-3. **打包与复核**：称好后拖到药包区，全部完成进入复核阶段——系统随机抽一味，问「刚才白芍抓了 12g 还是 15g」（考察记忆）。
+3. **打包与复核**：称好后拖到药包区；先煎/后下的药要单独分包并贴标（F 分包 / T 贴标）。全部完成进入复核阶段——逐味核对整张方子：每味药实称多少、与方子差多少、先煎后下是否单独包、包上有没有写清药名；对不上的当场挑出，由复核人决定「重抓」（退回抓药重称）或「认下」（扣满意度），返工过程留记录；同一味药抓了两回的，两回结果都列出来。
 4. **时间压力**：门外病人排队，超时病人离开，满意度下降。
 
 ## 4. 关卡与难度曲线
@@ -31,6 +31,9 @@
 ```ts
 type Prescription = { id: string; items: { herb: string; grams: number; decoct: 'normal'|'first'|'last' }[] };
 type WeighResult   = { herb: string; target: number; actual: number; ok: boolean; deltaG: number };
+type Package       = { herb: string; grams: number; decoct: 'normal'|'first'|'last'; separated: boolean; labeled: boolean };
+type ReviewEntry   = { herb: string; target: number; decoct: string; attempts: WeighResult[]; issues: ('weight'|'not-separated'|'unlabeled')[]; decision: 'reweigh'|'accept'|null };
+type ReworkRecord  = { round: number; herb: string; issues: string[]; decision: 'reweigh'|'accept'; actual: number };
 type GameState     = { level: number; score: number; combo: number; queue: number; satisfaction: number; expired: boolean };
 ```
 

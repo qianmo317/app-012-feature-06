@@ -75,6 +75,14 @@ export class ApothecaryGame {
       this.ui.drawTareButton(ctx, this.scale.x + this.scale.w - 60, this.scale.y + this.scale.h + 10, false);
     }
 
+    if (this.game.phase === 'weighing') {
+      this.ui.buttonRects = [];
+      const item = this.game.currentItem();
+      if (item && item.decoct !== 'normal') {
+        this.ui.drawPackToggles(ctx, this.scale.x, this.scale.y + this.scale.h + 48, this.game.packSeparated, this.game.packLabeled);
+      }
+    }
+
     if (this.game.currentHerb) {
       const herbMeta = getHerbByName(this.game.currentHerb);
       if (herbMeta) {
@@ -100,11 +108,10 @@ export class ApothecaryGame {
     }
 
     if (this.game.phase === 'review') {
-      if (this.game.reviewQuestion) {
-        this.ui.drawReview(ctx, w, h, this.game.reviewQuestion.herb, this.game.reviewQuestion.options, this.game.reviewSelected, this.game.reviewResult);
-      }
+      this.ui.drawReview(ctx, w, h, this.game.reviewEntries, this.game.reviewRound, this.game.reworkLog);
     } else if (this.game.phase === 'result') {
-      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.results, this.game.results.every(r => r.ok));
+      const reworkCount = this.game.reworkLog.filter(r => r.decision === 'reweigh').length;
+      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.results, this.game.lastLevelPassed, reworkCount);
     } else if (this.game.phase === 'gameover') {
       this.ui.drawGameOver(ctx, w, h, this.game.state.score, this.game.state.level);
     }
@@ -204,11 +211,19 @@ export class ApothecaryGame {
 
     if (this.game.phase === 'review') {
       const btn = this.ui.buttonRects.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-      if (btn && btn.action.startsWith('review-')) {
-        const val = parseInt(btn.action.replace('review-', ''));
-        const correct = this.game.answerReview(val);
-        if (correct) playSuccessSound();
-        else playErrorSound();
+      if (btn) {
+        if (btn.action.startsWith('reweigh-')) {
+          const herb = btn.action.slice('reweigh-'.length);
+          if (this.game.decideReview(herb, 'reweigh')) playPointerSound();
+        } else if (btn.action.startsWith('accept-')) {
+          const herb = btn.action.slice('accept-'.length);
+          if (this.game.decideReview(herb, 'accept')) playErrorSound();
+        } else if (btn.action === 'review-done') {
+          const outcome = this.game.completeReview();
+          if (outcome === 'finish') playSuccessSound();
+          else if (outcome === 'rework') playDrawerSound();
+          else playErrorSound();
+        }
       }
       return;
     }
@@ -244,6 +259,19 @@ export class ApothecaryGame {
     }
 
     if (this.game.phase === 'weighing') {
+      const btn = this.ui.buttonRects.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+      if (btn) {
+        if (btn.action === 'pack-sep') {
+          this.game.togglePackSeparated();
+          playPointerSound();
+          return;
+        }
+        if (btn.action === 'pack-label') {
+          this.game.togglePackLabeled();
+          playPointerSound();
+          return;
+        }
+      }
       const sx = this.scale.x;
       const sy = this.scale.y + this.scale.h + 10;
       if (x >= sx && x <= sx + 40 && y >= sy && y <= sy + 32) {
@@ -328,6 +356,12 @@ export class ApothecaryGame {
       } else if (key === 'z' || key === 'Z') {
         this.game.tare();
         playPointerSound();
+      } else if (key === 'f' || key === 'F') {
+        this.game.togglePackSeparated();
+        playPointerSound();
+      } else if (key === 't' || key === 'T') {
+        this.game.togglePackLabeled();
+        playPointerSound();
       } else if (key === 'ArrowUp' || key === 'ArrowRight') {
         this.game.addWeight(0.5);
         playPointerSound();
@@ -338,10 +372,19 @@ export class ApothecaryGame {
       return;
     }
 
+    if (this.game.phase === 'review') {
+      if (key === 'Enter' || key === ' ') {
+        const outcome = this.game.completeReview();
+        if (outcome === 'finish') playSuccessSound();
+        else if (outcome === 'rework') playDrawerSound();
+        else playErrorSound();
+      }
+      return;
+    }
+
     if (this.game.phase === 'result') {
       if (key === 'Enter' || key === ' ') {
-        const passed = this.game.results.every(r => r.ok);
-        if (passed) {
+        if (this.game.lastLevelPassed) {
           this.game.nextLevel();
         } else {
           this.game.retryLevel();
